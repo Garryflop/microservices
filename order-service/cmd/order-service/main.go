@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"log"
-	"net/http"
 	"os"
 	"time"
 
@@ -43,10 +42,12 @@ func main() {
 
 	orderRepo := repository.NewPostgresOrderRepository(db)
 
-	httpClient := &http.Client{
-		Timeout: 2 * time.Second,
+	// gRPC
+	paymentClient, err := infrastructure.NewGRPCPaymentClient(cfg.PaymentGRPCAddr)
+	if err != nil {
+		log.Fatalf("failed to create payment client: %v", err)
 	}
-	paymentClient := infrastructure.NewHTTPPaymentClient(cfg.PaymentServiceURL, httpClient)
+	defer paymentClient.Close()
 
 	orderUseCase := usecase.NewOrderUseCase(orderRepo, paymentClient)
 	handler := transporthttp.NewHandler(orderUseCase)
