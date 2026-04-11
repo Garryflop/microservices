@@ -3,14 +3,17 @@ package main
 import (
 	"database/sql"
 	"log"
+	"net"
 	"os"
 	"time"
 
 	_ "github.com/lib/pq"
+	"google.golang.org/grpc"
 
 	"order-service/internal/config"
 	"order-service/internal/infrastructure"
 	"order-service/internal/repository"
+	transportgrpc "order-service/internal/transport/grpc"
 	transporthttp "order-service/internal/transport/http"
 	"order-service/internal/usecase"
 )
@@ -42,7 +45,6 @@ func main() {
 
 	orderRepo := repository.NewPostgresOrderRepository(db)
 
-	// gRPC
 	paymentClient, err := infrastructure.NewGRPCPaymentClient(cfg.PaymentGRPCAddr)
 	if err != nil {
 		log.Fatalf("failed to create payment client: %v", err)
@@ -50,10 +52,29 @@ func main() {
 	defer paymentClient.Close()
 
 	orderUseCase := usecase.NewOrderUseCase(orderRepo, paymentClient)
+
+	//Start gRPC streaming server
+	go func() {
+		lis, err := net.Listen("tcp", ":"+cfg.GRPCPort)
+		if err != nil {
+			log.Fatalf("failed to listen on gRPC port: %v", err)
+		}
+
+		grpcServer := grpc.NewServer()
+		grpcHandler := transportgrpc.NewServer(orderUseCase)
+		transportgrpc.RegisterServer(grpcServer, grpcHandler)
+
+		log.Printf("Order gRPC Server listening on :%s", cfg.GRPCPort)
+		if err := grpcServer.Serve(lis); err != nil {
+			log.Fatalf("failed to serve gRPC: %v", err)
+		}
+	}()
+
+	// Start REST server
 	handler := transporthttp.NewHandler(orderUseCase)
 	router := transporthttp.NewRouter(handler)
 
-	log.Printf("Order Service listening on :%s", cfg.Port)
+	log.Printf("Order REST Server listening on :%s", cfg.Port)
 	if err := router.Run(":" + cfg.Port); err != nil {
 		log.Fatalf("failed to start server: %v", err)
 	}
