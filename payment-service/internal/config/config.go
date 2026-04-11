@@ -7,16 +7,18 @@ import (
 )
 
 type Config struct {
-	DBDSN string
-	Port  string
+	DBDSN    string
+	Port     string
+	GRPCPort string
 }
 
 func Load() *Config {
 	loadEnvFile(".env")
 
 	return &Config{
-		DBDSN: getEnv("DB_DSN", "postgres://postgres:postgres@localhost:5432/payments_db?sslmode=disable"),
-		Port:  getEnv("PORT", "8082"),
+		DBDSN:    getEnv("DB_DSN", "postgres://postgres:postgres@localhost:5432/payments_db?sslmode=disable"),
+		Port:     getEnv("PORT", "8082"),
+		GRPCPort: getEnv("GRPC_PORT", "50051"),
 	}
 }
 

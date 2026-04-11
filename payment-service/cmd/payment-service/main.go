@@ -3,13 +3,16 @@ package main
 import (
 	"database/sql"
 	"log"
+	"net"
 	"os"
 	"time"
 
 	_ "github.com/lib/pq"
+	"google.golang.org/grpc"
 
 	"payment-service/internal/config"
 	"payment-service/internal/repository"
+	transportgrpc "payment-service/internal/transport/grpc"
 	transporthttp "payment-service/internal/transport/http"
 	"payment-service/internal/usecase"
 )
@@ -42,11 +45,29 @@ func main() {
 	// Manual Dependency Injection
 	paymentRepo := repository.NewPostgresPaymentRepository(db)
 	paymentUseCase := usecase.NewPaymentUseCase(paymentRepo)
+
+	// Start gRPC Server
+	go func() {
+		lis, err := net.Listen("tcp", ":"+cfg.GRPCPort)
+		if err != nil {
+			log.Fatalf("failed to listen on gRPC port: %v", err)
+		}
+
+		grpcServer := grpc.NewServer()
+		grpcHandler := transportgrpc.NewServer(paymentUseCase)
+		transportgrpc.RegisterServer(grpcServer, grpcHandler)
+
+		log.Printf("Payment gRPC Server listening on :%s", cfg.GRPCPort)
+		if err := grpcServer.Serve(lis); err != nil {
+			log.Fatalf("failed to serve gRPC: %v", err)
+		}
+	}()
+
+	// Start REST Server
 	handler := transporthttp.NewHandler(paymentUseCase)
 	router := transporthttp.NewRouter(handler)
 
-	// Start Server
-	log.Printf("Payment Service listening on :%s", cfg.Port)
+	log.Printf("Payment REST Server listening on :%s", cfg.Port)
 	if err := router.Run(":" + cfg.Port); err != nil {
 		log.Fatalf("failed to start server: %v", err)
 	}
