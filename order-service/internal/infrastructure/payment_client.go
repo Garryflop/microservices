@@ -35,7 +35,6 @@ type paymentResponse struct {
 	Status        string `json:"status"`
 }
 
-// AuthorizePayment calls POST /payments on the Payment Service.
 func (c *HTTPPaymentClient) AuthorizePayment(ctx context.Context, orderID string, amount int64) (*usecase.PaymentResponse, error) {
 	reqBody := paymentRequest{
 		OrderID: orderID,

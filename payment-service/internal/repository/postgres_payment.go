@@ -13,12 +13,10 @@ type PostgresPaymentRepository struct {
 	db *sql.DB
 }
 
-// creates a new repository backed by PostgreSQL
 func NewPostgresPaymentRepository(db *sql.DB) *PostgresPaymentRepository {
 	return &PostgresPaymentRepository{db: db}
 }
 
-// inserts a new payment into the database
 func (r *PostgresPaymentRepository) Create(ctx context.Context, payment *domain.Payment) error {
 	query := `
 		INSERT INTO payments (id, order_id, transaction_id, amount, status)
@@ -37,7 +35,6 @@ func (r *PostgresPaymentRepository) Create(ctx context.Context, payment *domain.
 	return nil
 }
 
-// retrieves a payment by its associated order ID
 func (r *PostgresPaymentRepository) GetByOrderID(ctx context.Context, orderID string) (*domain.Payment, error) {
 	query := `
 		SELECT id, order_id, transaction_id, amount, status
