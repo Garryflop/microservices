@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc"
 
 	"payment-service/internal/config"
+	"payment-service/internal/middleware"
 	"payment-service/internal/repository"
 	transportgrpc "payment-service/internal/transport/grpc"
 	transporthttp "payment-service/internal/transport/http"
@@ -53,7 +54,9 @@ func main() {
 			log.Fatalf("failed to listen on gRPC port: %v", err)
 		}
 
-		grpcServer := grpc.NewServer()
+		grpcServer := grpc.NewServer(
+			grpc.UnaryInterceptor(middleware.LoggingInterceptor()),
+		)
 		grpcHandler := transportgrpc.NewServer(paymentUseCase)
 		transportgrpc.RegisterServer(grpcServer, grpcHandler)
 
