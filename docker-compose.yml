@@ -1,0 +1,100 @@
+services:
+  # ── Databases ──────────────────────────────────────────────
+  orders-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: orders_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - orders_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  payments-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: payments_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - payments_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Message Broker ─────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Application Services ──────────────────────────────────
+  order-service:
+    build:
+      context: ./order-service
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+      - "50052:50052"
+    environment:
+      DB_DSN: postgres://postgres:admin@orders-db:5432/orders_db?sslmode=disable
+      PAYMENT_GRPC_ADDR: payment-service:50051
+      PORT: "8081"
+      GRPC_PORT: "50052"
+    depends_on:
+      orders-db:
+        condition: service_healthy
+
+  payment-service:
+    build:
+      context: ./payment-service
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8082"
+      - "50051:50051"
+    environment:
+      DB_DSN: postgres://postgres:admin@payments-db:5432/payments_db?sslmode=disable
+      PORT: "8082"
+      GRPC_PORT: "50051"
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      payments-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  notification-service:
+    build:
+      context: ./notification-service
+      dockerfile: Dockerfile
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+volumes:
+  orders_data:
+  payments_data:
+  rabbitmq_data:
