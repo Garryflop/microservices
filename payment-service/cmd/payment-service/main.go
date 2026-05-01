@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc"
 
 	"payment-service/internal/config"
+	"payment-service/internal/infrastructure"
 	"payment-service/internal/middleware"
 	"payment-service/internal/repository"
 	transportgrpc "payment-service/internal/transport/grpc"
@@ -43,9 +44,16 @@ func main() {
 		log.Fatalf("failed to run migrations: %v", err)
 	}
 
+	// RabbitMQ Publisher
+	publisher, err := infrastructure.NewRabbitMQPublisher(cfg.RabbitMQURL)
+	if err != nil {
+		log.Fatalf("failed to create RabbitMQ publisher: %v", err)
+	}
+	defer publisher.Close()
+
 	// Manual Dependency Injection
 	paymentRepo := repository.NewPostgresPaymentRepository(db)
-	paymentUseCase := usecase.NewPaymentUseCase(paymentRepo)
+	paymentUseCase := usecase.NewPaymentUseCase(paymentRepo, publisher)
 
 	// Start gRPC Server
 	go func() {
@@ -84,3 +92,4 @@ func runMigrations(db *sql.DB) error {
 	_, err = db.Exec(string(migration))
 	return err
 }
+
