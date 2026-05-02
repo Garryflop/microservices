@@ -30,7 +30,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to connect to database: %v", err)
 	}
-	defer db.Close()
 
 	for i := 0; i < 30; i++ {
 		if err := db.Ping(); err == nil {
@@ -48,17 +47,16 @@ func main() {
 		log.Fatalf("failed to run migrations: %v", err)
 	}
 
-	// RabbitMQ Publisher
 	publisher, err := infrastructure.NewRabbitMQPublisher(cfg.RabbitMQURL)
 	if err != nil {
 		log.Fatalf("failed to create RabbitMQ publisher: %v", err)
 	}
 
-	// Manual Dependency Injection
+	// dependency injection
 	paymentRepo := repository.NewPostgresPaymentRepository(db)
 	paymentUseCase := usecase.NewPaymentUseCase(paymentRepo, publisher)
 
-	// Start gRPC Server
+	// gRPC server
 	grpcServer := grpc.NewServer(
 		grpc.UnaryInterceptor(middleware.LoggingInterceptor()),
 	)
@@ -76,7 +74,7 @@ func main() {
 		}
 	}()
 
-	// Start REST Server
+	// REST server
 	handler := transporthttp.NewHandler(paymentUseCase)
 	router := transporthttp.NewRouter(handler)
 
@@ -92,7 +90,7 @@ func main() {
 		}
 	}()
 
-	// Graceful Shutdown
+	// graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -124,4 +122,3 @@ func runMigrations(db *sql.DB) error {
 	_, err = db.Exec(string(migration))
 	return err
 }
-

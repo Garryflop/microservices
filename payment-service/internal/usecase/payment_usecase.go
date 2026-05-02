@@ -11,7 +11,6 @@ import (
 	"payment-service/internal/domain"
 )
 
-// implements the business logic for payment operations
 type PaymentUseCase struct {
 	repo      PaymentRepository
 	publisher EventPublisher
@@ -21,7 +20,6 @@ func NewPaymentUseCase(repo PaymentRepository, publisher EventPublisher) *Paymen
 	return &PaymentUseCase{repo: repo, publisher: publisher}
 }
 
-// creates and stores a new payment, applying business rules
 func (uc *PaymentUseCase) ProcessPayment(ctx context.Context, orderID string, amount int64) (*domain.Payment, error) {
 	payment, err := domain.NewPayment(orderID, amount)
 	if err != nil {
@@ -38,7 +36,7 @@ func (uc *PaymentUseCase) ProcessPayment(ctx context.Context, orderID string, am
 		return nil, fmt.Errorf("failed to store payment: %w", err)
 	}
 
-	// Publish event after successful DB commit (at-least-once delivery)
+	// publish event after DB commit
 	if payment.Status == domain.StatusAuthorized {
 		event := PaymentCompletedEvent{
 			EventID:       uuid.New().String(),
@@ -50,8 +48,6 @@ func (uc *PaymentUseCase) ProcessPayment(ctx context.Context, orderID string, am
 		}
 
 		if err := uc.publisher.PublishPaymentCompleted(ctx, event); err != nil {
-			// Log the error but don't fail the payment — the message broker
-			// might be temporarily unavailable. In production, use an outbox pattern.
 			log.Printf("[PaymentUseCase] WARNING: failed to publish event: %v", err)
 		}
 	}
@@ -66,4 +62,3 @@ func (uc *PaymentUseCase) GetPayment(ctx context.Context, orderID string) (*doma
 	}
 	return payment, nil
 }
-

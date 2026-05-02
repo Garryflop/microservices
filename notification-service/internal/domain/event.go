@@ -2,9 +2,7 @@ package domain
 
 import "time"
 
-// PaymentCompletedEvent represents the event published by the Payment Service
-// after a successful payment. The Notification Service is fully decoupled —
-// it only knows about this event structure, not about Order or Payment services.
+// PaymentCompletedEvent from the Payment Service
 type PaymentCompletedEvent struct {
 	EventID       string    `json:"event_id"`
 	OrderID       string    `json:"order_id"`

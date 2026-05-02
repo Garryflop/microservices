@@ -16,7 +16,7 @@ import (
 func main() {
 	cfg := config.Load()
 
-	// Manual Dependency Injection
+	// dependency injection
 	idempotencyStore := store.NewIdempotencyStore()
 	notificationHandler := handler.NewNotificationHandler(idempotencyStore)
 
@@ -29,7 +29,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Graceful Shutdown
+	// graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 

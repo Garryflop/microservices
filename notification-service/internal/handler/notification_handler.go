@@ -8,9 +8,7 @@ import (
 	"notification-service/internal/store"
 )
 
-// NotificationHandler contains the business logic for processing payment events.
-// It simulates sending an email by logging the notification details.
-// Uses an IdempotencyStore to prevent duplicate processing.
+// NotificationHandler processes events with idempotency
 type NotificationHandler struct {
 	store *store.IdempotencyStore
 }
@@ -19,11 +17,8 @@ func NewNotificationHandler(s *store.IdempotencyStore) *NotificationHandler {
 	return &NotificationHandler{store: s}
 }
 
-// Handle processes a PaymentCompletedEvent and simulates sending an email.
-// Returns an error if the notification could not be "sent".
-// Duplicate events (same EventID) are skipped and acknowledged.
 func (h *NotificationHandler) Handle(event domain.PaymentCompletedEvent) error {
-	// Idempotency check — skip if already processed
+	// idempotency check
 	if h.store.IsProcessed(event.EventID) {
 		log.Printf("[Notification] Duplicate event %s, skipping", event.EventID)
 		return nil
@@ -43,7 +38,6 @@ func (h *NotificationHandler) Handle(event domain.PaymentCompletedEvent) error {
 		dollars,
 	)
 
-	// Mark as processed only after successful "send"
 	h.store.MarkProcessed(event.EventID)
 
 	return nil

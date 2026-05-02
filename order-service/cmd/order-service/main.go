@@ -46,6 +46,7 @@ func main() {
 		log.Fatalf("failed to run migrations: %v", err)
 	}
 
+	// dependency injection
 	orderRepo := repository.NewPostgresOrderRepository(db)
 
 	paymentClient, err := infrastructure.NewGRPCPaymentClient(cfg.PaymentGRPCAddr)
@@ -55,7 +56,7 @@ func main() {
 
 	orderUseCase := usecase.NewOrderUseCase(orderRepo, paymentClient)
 
-	// Start gRPC streaming server
+	// gRPC server
 	grpcServer := grpc.NewServer()
 	grpcHandler := transportgrpc.NewServer(orderUseCase)
 	transportgrpc.RegisterServer(grpcServer, grpcHandler)
@@ -71,7 +72,7 @@ func main() {
 		}
 	}()
 
-	// Start REST server
+	// REST server
 	handler := transporthttp.NewHandler(orderUseCase)
 	router := transporthttp.NewRouter(handler)
 
@@ -87,7 +88,7 @@ func main() {
 		}
 	}()
 
-	// Graceful Shutdown
+	// graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -119,4 +120,3 @@ func runMigrations(db *sql.DB) error {
 	_, err = db.Exec(string(migration))
 	return err
 }
-

@@ -12,7 +12,7 @@ type PaymentRepository interface {
 	GetByOrderID(ctx context.Context, orderID string) (*domain.Payment, error)
 }
 
-// PaymentCompletedEvent is the event published after a successful payment.
+// event published after payment
 type PaymentCompletedEvent struct {
 	EventID       string    `json:"event_id"`
 	OrderID       string    `json:"order_id"`
@@ -22,8 +22,7 @@ type PaymentCompletedEvent struct {
 	Timestamp     time.Time `json:"timestamp"`
 }
 
-// EventPublisher is the port for publishing payment events to a message broker.
-// The infrastructure layer provides the concrete implementation (e.g., RabbitMQ).
+// message broker port
 type EventPublisher interface {
 	PublishPaymentCompleted(ctx context.Context, event PaymentCompletedEvent) error
 }

@@ -12,16 +12,12 @@ import (
 	"payment-service/internal/usecase"
 )
 
-
-// RabbitMQPublisher publishes payment events to RabbitMQ.
-// It implements the EventPublisher port from the usecase layer.
+// RabbitMQ event publisher
 type RabbitMQPublisher struct {
 	conn    *amqp.Connection
 	channel *amqp.Channel
 }
 
-// NewRabbitMQPublisher connects to RabbitMQ and declares the exchange and queue.
-// Retries connection up to 30 times for Docker startup ordering.
 func NewRabbitMQPublisher(url string) (*RabbitMQPublisher, error) {
 	var conn *amqp.Connection
 	var err error
@@ -44,29 +40,18 @@ func NewRabbitMQPublisher(url string) (*RabbitMQPublisher, error) {
 		return nil, fmt.Errorf("failed to open channel: %w", err)
 	}
 
-	// Declare durable exchange
+	// durable exchange
 	if err := ch.ExchangeDeclare(
-		"payment.events", // name
-		"direct",         // type
-		true,             // durable
-		false,            // auto-deleted
-		false,            // internal
-		false,            // no-wait
-		nil,              // arguments
+		"payment.events", "direct", true, false, false, false, nil,
 	); err != nil {
 		ch.Close()
 		conn.Close()
 		return nil, fmt.Errorf("failed to declare exchange: %w", err)
 	}
 
-	// Declare durable queue
+	// durable queue
 	q, err := ch.QueueDeclare(
-		"payment.completed", // name
-		true,                // durable
-		false,               // auto-delete
-		false,               // exclusive
-		false,               // no-wait
-		nil,                 // arguments
+		"payment.completed", true, false, false, false, nil,
 	)
 	if err != nil {
 		ch.Close()
@@ -74,29 +59,21 @@ func NewRabbitMQPublisher(url string) (*RabbitMQPublisher, error) {
 		return nil, fmt.Errorf("failed to declare queue: %w", err)
 	}
 
-	// Bind queue to exchange
+	// bind queue
 	if err := ch.QueueBind(
-		q.Name,              // queue name
-		"payment.completed", // routing key
-		"payment.events",    // exchange
-		false,               // no-wait
-		nil,                 // arguments
+		q.Name, "payment.completed", "payment.events", false, nil,
 	); err != nil {
 		ch.Close()
 		conn.Close()
 		return nil, fmt.Errorf("failed to bind queue: %w", err)
 	}
 
-	log.Println("[Publisher] Connected to RabbitMQ, exchange and queue ready")
+	log.Println("[Publisher] RabbitMQ ready")
 
-	return &RabbitMQPublisher{
-		conn:    conn,
-		channel: ch,
-	}, nil
+	return &RabbitMQPublisher{conn: conn, channel: ch}, nil
 }
 
-// PublishPaymentCompleted publishes a payment completed event to RabbitMQ.
-// Messages are persistent (DeliveryMode=2) so they survive broker restarts.
+// PublishPaymentCompleted sends persistent event
 func (p *RabbitMQPublisher) PublishPaymentCompleted(ctx context.Context, event usecase.PaymentCompletedEvent) error {
 	body, err := json.Marshal(event)
 	if err != nil {
@@ -104,12 +81,9 @@ func (p *RabbitMQPublisher) PublishPaymentCompleted(ctx context.Context, event u
 	}
 
 	if err := p.channel.PublishWithContext(ctx,
-		"payment.events",    // exchange
-		"payment.completed", // routing key
-		false,               // mandatory
-		false,               // immediate
+		"payment.events", "payment.completed", false, false,
 		amqp.Publishing{
-			DeliveryMode: amqp.Persistent, // message survives broker restart
+			DeliveryMode: amqp.Persistent,
 			ContentType:  "application/json",
 			Body:         body,
 		},
@@ -121,7 +95,6 @@ func (p *RabbitMQPublisher) PublishPaymentCompleted(ctx context.Context, event u
 	return nil
 }
 
-// Close cleanly shuts down the RabbitMQ channel and connection.
 func (p *RabbitMQPublisher) Close() {
 	if p.channel != nil {
 		p.channel.Close()
