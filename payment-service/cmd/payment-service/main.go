@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"net"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -49,25 +53,23 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create RabbitMQ publisher: %v", err)
 	}
-	defer publisher.Close()
 
 	// Manual Dependency Injection
 	paymentRepo := repository.NewPostgresPaymentRepository(db)
 	paymentUseCase := usecase.NewPaymentUseCase(paymentRepo, publisher)
 
 	// Start gRPC Server
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(middleware.LoggingInterceptor()),
+	)
+	grpcHandler := transportgrpc.NewServer(paymentUseCase)
+	transportgrpc.RegisterServer(grpcServer, grpcHandler)
+
 	go func() {
 		lis, err := net.Listen("tcp", ":"+cfg.GRPCPort)
 		if err != nil {
 			log.Fatalf("failed to listen on gRPC port: %v", err)
 		}
-
-		grpcServer := grpc.NewServer(
-			grpc.UnaryInterceptor(middleware.LoggingInterceptor()),
-		)
-		grpcHandler := transportgrpc.NewServer(paymentUseCase)
-		transportgrpc.RegisterServer(grpcServer, grpcHandler)
-
 		log.Printf("Payment gRPC Server listening on :%s", cfg.GRPCPort)
 		if err := grpcServer.Serve(lis); err != nil {
 			log.Fatalf("failed to serve gRPC: %v", err)
@@ -78,10 +80,40 @@ func main() {
 	handler := transporthttp.NewHandler(paymentUseCase)
 	router := transporthttp.NewRouter(handler)
 
-	log.Printf("Payment REST Server listening on :%s", cfg.Port)
-	if err := router.Run(":" + cfg.Port); err != nil {
-		log.Fatalf("failed to start server: %v", err)
+	httpServer := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: router,
 	}
+
+	go func() {
+		log.Printf("Payment REST Server listening on :%s", cfg.Port)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("failed to start server: %v", err)
+		}
+	}()
+
+	// Graceful Shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("[Payment] Shutting down gracefully...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	grpcServer.GracefulStop()
+	log.Println("[Payment] gRPC server stopped")
+
+	if err := httpServer.Shutdown(ctx); err != nil {
+		log.Printf("[Payment] HTTP server shutdown error: %v", err)
+	}
+	log.Println("[Payment] HTTP server stopped")
+
+	publisher.Close()
+	db.Close()
+
+	log.Println("[Payment] Graceful shutdown complete")
 }
 
 func runMigrations(db *sql.DB) error {

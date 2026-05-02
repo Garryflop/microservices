@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"net"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -25,7 +29,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to connect to database: %v", err)
 	}
-	defer db.Close()
 
 	for i := 0; i < 30; i++ {
 		if err := db.Ping(); err == nil {
@@ -49,21 +52,19 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create payment client: %v", err)
 	}
-	defer paymentClient.Close()
 
 	orderUseCase := usecase.NewOrderUseCase(orderRepo, paymentClient)
 
-	//Start gRPC streaming server
+	// Start gRPC streaming server
+	grpcServer := grpc.NewServer()
+	grpcHandler := transportgrpc.NewServer(orderUseCase)
+	transportgrpc.RegisterServer(grpcServer, grpcHandler)
+
 	go func() {
 		lis, err := net.Listen("tcp", ":"+cfg.GRPCPort)
 		if err != nil {
 			log.Fatalf("failed to listen on gRPC port: %v", err)
 		}
-
-		grpcServer := grpc.NewServer()
-		grpcHandler := transportgrpc.NewServer(orderUseCase)
-		transportgrpc.RegisterServer(grpcServer, grpcHandler)
-
 		log.Printf("Order gRPC Server listening on :%s", cfg.GRPCPort)
 		if err := grpcServer.Serve(lis); err != nil {
 			log.Fatalf("failed to serve gRPC: %v", err)
@@ -74,10 +75,40 @@ func main() {
 	handler := transporthttp.NewHandler(orderUseCase)
 	router := transporthttp.NewRouter(handler)
 
-	log.Printf("Order REST Server listening on :%s", cfg.Port)
-	if err := router.Run(":" + cfg.Port); err != nil {
-		log.Fatalf("failed to start server: %v", err)
+	httpServer := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: router,
 	}
+
+	go func() {
+		log.Printf("Order REST Server listening on :%s", cfg.Port)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("failed to start server: %v", err)
+		}
+	}()
+
+	// Graceful Shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("[Order] Shutting down gracefully...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	grpcServer.GracefulStop()
+	log.Println("[Order] gRPC server stopped")
+
+	if err := httpServer.Shutdown(ctx); err != nil {
+		log.Printf("[Order] HTTP server shutdown error: %v", err)
+	}
+	log.Println("[Order] HTTP server stopped")
+
+	paymentClient.Close()
+	db.Close()
+
+	log.Println("[Order] Graceful shutdown complete")
 }
 
 func runMigrations(db *sql.DB) error {
@@ -88,3 +119,4 @@ func runMigrations(db *sql.DB) error {
 	_, err = db.Exec(string(migration))
 	return err
 }
+
