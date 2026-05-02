@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -47,9 +48,34 @@ func NewRabbitMQConsumer(url string, h *handler.NotificationHandler) (*RabbitMQC
 
 // Start consumes messages until context cancelled
 func (c *RabbitMQConsumer) Start(ctx context.Context) error {
-	// durable queue
+	// DLX exchange
+	if err := c.channel.ExchangeDeclare(
+		"payment.events.dlx", "direct", true, false, false, false, nil,
+	); err != nil {
+		return fmt.Errorf("failed to declare DLX exchange: %w", err)
+	}
+
+	// DLQ queue
+	if _, err := c.channel.QueueDeclare(
+		"payment.completed.dlq", true, false, false, false, nil,
+	); err != nil {
+		return fmt.Errorf("failed to declare DLQ: %w", err)
+	}
+
+	// bind DLQ
+	if err := c.channel.QueueBind(
+		"payment.completed.dlq", "payment.completed.dlq", "payment.events.dlx", false, nil,
+	); err != nil {
+		return fmt.Errorf("failed to bind DLQ: %w", err)
+	}
+
+	// main queue with DLX routing
 	q, err := c.channel.QueueDeclare(
-		"payment.completed", true, false, false, false, nil,
+		"payment.completed", true, false, false, false,
+		amqp.Table{
+			"x-dead-letter-exchange":    "payment.events.dlx",
+			"x-dead-letter-routing-key": "payment.completed.dlq",
+		},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to declare queue: %w", err)
@@ -80,11 +106,50 @@ func (c *RabbitMQConsumer) Start(ctx context.Context) error {
 	}
 }
 
+// getRetryCount extracts retry count from x-death header
+func getRetryCount(msg amqp.Delivery) int64 {
+	xDeath, ok := msg.Headers["x-death"]
+	if !ok {
+		return 0
+	}
+
+	deaths, ok := xDeath.([]interface{})
+	if !ok || len(deaths) == 0 {
+		return 0
+	}
+
+	first, ok := deaths[0].(amqp.Table)
+	if !ok {
+		return 0
+	}
+
+	count, ok := first["count"].(int64)
+	if !ok {
+		return 0
+	}
+
+	return count
+}
+
 func (c *RabbitMQConsumer) processMessage(msg amqp.Delivery) {
 	var event domain.PaymentCompletedEvent
 	if err := json.Unmarshal(msg.Body, &event); err != nil {
 		log.Printf("[Consumer] Failed to unmarshal message: %v", err)
 		msg.Nack(false, false)
+		return
+	}
+
+	// simulate permanent failure for DLQ demo
+	if strings.Contains(event.OrderID, "FAIL") {
+		retries := getRetryCount(msg)
+		log.Printf("[Consumer] Permanent error for order %s (retry %d/3)", event.OrderID, retries)
+
+		if retries >= 3 {
+			log.Printf("[Consumer] Max retries reached, sending to DLQ: %s", event.EventID)
+			msg.Nack(false, false) // reject → DLQ
+		} else {
+			msg.Nack(false, true) // requeue for retry
+		}
 		return
 	}
 
