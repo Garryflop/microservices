@@ -10,13 +10,15 @@ import (
 	"notification-service/internal/config"
 	"notification-service/internal/handler"
 	"notification-service/internal/infrastructure"
+	"notification-service/internal/store"
 )
 
 func main() {
 	cfg := config.Load()
 
 	// Manual Dependency Injection
-	notificationHandler := handler.NewNotificationHandler()
+	idempotencyStore := store.NewIdempotencyStore()
+	notificationHandler := handler.NewNotificationHandler(idempotencyStore)
 
 	consumer, err := infrastructure.NewRabbitMQConsumer(cfg.RabbitMQURL, notificationHandler)
 	if err != nil {
