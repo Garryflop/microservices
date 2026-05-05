@@ -8,7 +8,6 @@ import (
 	"notification-service/internal/store"
 )
 
-// NotificationHandler processes events with idempotency
 type NotificationHandler struct {
 	store *store.IdempotencyStore
 }

@@ -14,7 +14,6 @@ import (
 	"notification-service/internal/handler"
 )
 
-// RabbitMQ event consumer
 type RabbitMQConsumer struct {
 	conn    *amqp.Connection
 	channel *amqp.Channel
@@ -46,7 +45,6 @@ func NewRabbitMQConsumer(url string, h *handler.NotificationHandler) (*RabbitMQC
 	return &RabbitMQConsumer{conn: conn, channel: ch, handler: h}, nil
 }
 
-// Start consumes messages until context cancelled
 func (c *RabbitMQConsumer) Start(ctx context.Context) error {
 	// DLX exchange
 	if err := c.channel.ExchangeDeclare(
@@ -81,7 +79,7 @@ func (c *RabbitMQConsumer) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to declare queue: %w", err)
 	}
 
-	// manual ACK (autoAck=false)
+	// manual ACK
 	msgs, err := c.channel.Consume(
 		q.Name, "", false, false, false, false, nil,
 	)
@@ -106,7 +104,6 @@ func (c *RabbitMQConsumer) Start(ctx context.Context) error {
 	}
 }
 
-// getRetryCount extracts retry count from x-death header
 func getRetryCount(msg amqp.Delivery) int64 {
 	xDeath, ok := msg.Headers["x-death"]
 	if !ok {
@@ -146,7 +143,7 @@ func (c *RabbitMQConsumer) processMessage(msg amqp.Delivery) {
 
 		if retries >= 3 {
 			log.Printf("[Consumer] Max retries reached, sending to DLQ: %s", event.EventID)
-			msg.Nack(false, false) // reject → DLQ
+			msg.Nack(false, false) // reject theeen DLQ
 		} else {
 			msg.Nack(false, true) // requeue for retry
 		}

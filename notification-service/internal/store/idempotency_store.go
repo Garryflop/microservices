@@ -2,7 +2,6 @@ package store
 
 import "sync"
 
-// IdempotencyStore tracks processed event IDs in memory
 type IdempotencyStore struct {
 	processed sync.Map
 }

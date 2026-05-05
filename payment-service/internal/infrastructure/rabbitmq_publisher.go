@@ -49,7 +49,7 @@ func NewRabbitMQPublisher(url string) (*RabbitMQPublisher, error) {
 		return nil, fmt.Errorf("failed to declare exchange: %w", err)
 	}
 
-	// DLX exchange (must match consumer declaration)
+	// DLX exchange
 	if err := ch.ExchangeDeclare(
 		"payment.events.dlx", "direct", true, false, false, false, nil,
 	); err != nil {
@@ -75,12 +75,11 @@ func NewRabbitMQPublisher(url string) (*RabbitMQPublisher, error) {
 		return nil, fmt.Errorf("failed to bind DLQ: %w", err)
 	}
 
-	// durable queue with DLX args (identical to consumer declaration)
 	q, err := ch.QueueDeclare(
 		"payment.completed", true, false, false, false,
 		amqp.Table{
-			"x-dead-letter-exchange":     "payment.events.dlx",
-			"x-dead-letter-routing-key":  "payment.completed.dlq",
+			"x-dead-letter-exchange":    "payment.events.dlx",
+			"x-dead-letter-routing-key": "payment.completed.dlq",
 		},
 	)
 	if err != nil {
