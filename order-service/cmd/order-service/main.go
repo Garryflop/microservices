@@ -93,7 +93,7 @@ func main() {
 
 	// REST server
 	handler := transporthttp.NewHandler(orderUseCase)
-	router := transporthttp.NewRouter(handler)
+	router := transporthttp.NewRouter(handler, redisClient, cfg.RateLimitMax, cfg.RateLimitWindowSeconds)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,
