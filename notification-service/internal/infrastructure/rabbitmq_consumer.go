@@ -135,8 +135,6 @@ func (c *RabbitMQConsumer) processMessage(msg amqp.Delivery) {
 		msg.Nack(false, false)
 		return
 	}
-
-	// simulate permanent failure for DLQ demo
 	if strings.Contains(event.OrderID, "FAIL") {
 		retries := getRetryCount(msg)
 		log.Printf("[Consumer] Permanent error for order %s (retry %d/3)", event.OrderID, retries)
