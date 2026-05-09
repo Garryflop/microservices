@@ -48,6 +48,7 @@ func (uc *OrderUseCase) CreateOrder(ctx context.Context, customerID, itemName st
 	if err != nil {
 		order.MarkFailed()
 		_ = uc.repo.UpdateStatus(ctx, order.ID, domain.StatusFailed)
+		_ = uc.cache.Delete(ctx, order.ID) // invalidate cache
 		return order, ErrPaymentServiceUnavailable
 	}
 
@@ -56,11 +57,13 @@ func (uc *OrderUseCase) CreateOrder(ctx context.Context, customerID, itemName st
 		if err := uc.repo.UpdateStatus(ctx, order.ID, domain.StatusPaid); err != nil {
 			return nil, fmt.Errorf("failed to update order status: %w", err)
 		}
+		_ = uc.cache.Delete(ctx, order.ID) // invalidate cache
 	} else {
 		order.MarkFailed()
 		if err := uc.repo.UpdateStatus(ctx, order.ID, domain.StatusFailed); err != nil {
 			return nil, fmt.Errorf("failed to update order status: %w", err)
 		}
+		_ = uc.cache.Delete(ctx, order.ID) // invalidate cache
 	}
 
 	return order, nil
@@ -97,6 +100,7 @@ func (uc *OrderUseCase) CancelOrder(ctx context.Context, id string) (*domain.Ord
 	if err := uc.repo.UpdateStatus(ctx, order.ID, domain.StatusCancelled); err != nil {
 		return nil, fmt.Errorf("failed to cancel order: %w", err)
 	}
+	_ = uc.cache.Delete(ctx, order.ID) // invalidate cache
 
 	return order, nil
 }
