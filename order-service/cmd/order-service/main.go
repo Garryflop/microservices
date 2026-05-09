@@ -12,6 +12,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 
 	"order-service/internal/config"
@@ -46,15 +47,33 @@ func main() {
 		log.Fatalf("failed to run migrations: %v", err)
 	}
 
+	// Redis client
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: cfg.RedisAddr,
+	})
+	ctx := context.Background()
+	for i := 0; i < 30; i++ {
+		if err := redisClient.Ping(ctx).Err(); err == nil {
+			break
+		}
+		log.Println("waiting for Redis...")
+		time.Sleep(1 * time.Second)
+	}
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		log.Fatalf("Redis not reachable: %v", err)
+	}
+	log.Println("Redis connected")
+
 	// dependency injection
 	orderRepo := repository.NewPostgresOrderRepository(db)
+	orderCache := infrastructure.NewRedisOrderCache(redisClient, cfg.CacheTTLSeconds)
 
 	paymentClient, err := infrastructure.NewGRPCPaymentClient(cfg.PaymentGRPCAddr)
 	if err != nil {
 		log.Fatalf("failed to create payment client: %v", err)
 	}
 
-	orderUseCase := usecase.NewOrderUseCase(orderRepo, paymentClient)
+	orderUseCase := usecase.NewOrderUseCase(orderRepo, paymentClient, orderCache)
 
 	// gRPC server
 	grpcServer := grpc.NewServer()
@@ -95,18 +114,19 @@ func main() {
 
 	log.Println("[Order] Shutting down gracefully...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	grpcServer.GracefulStop()
 	log.Println("[Order] gRPC server stopped")
 
-	if err := httpServer.Shutdown(ctx); err != nil {
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("[Order] HTTP server shutdown error: %v", err)
 	}
 	log.Println("[Order] HTTP server stopped")
 
 	paymentClient.Close()
+	redisClient.Close()
 	db.Close()
 
 	log.Println("[Order] Graceful shutdown complete")
@@ -120,3 +140,4 @@ func runMigrations(db *sql.DB) error {
 	_, err = db.Exec(string(migration))
 	return err
 }
+

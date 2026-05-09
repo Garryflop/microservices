@@ -15,12 +15,14 @@ var ErrPaymentServiceUnavailable = errors.New("payment service unavailable")
 type OrderUseCase struct {
 	repo          OrderRepository
 	paymentClient PaymentClient
+	cache         OrderCache
 }
 
-func NewOrderUseCase(repo OrderRepository, paymentClient PaymentClient) *OrderUseCase {
+func NewOrderUseCase(repo OrderRepository, paymentClient PaymentClient, cache OrderCache) *OrderUseCase {
 	return &OrderUseCase{
 		repo:          repo,
 		paymentClient: paymentClient,
+		cache:         cache,
 	}
 }
 
@@ -65,10 +67,20 @@ func (uc *OrderUseCase) CreateOrder(ctx context.Context, customerID, itemName st
 }
 
 func (uc *OrderUseCase) GetOrder(ctx context.Context, id string) (*domain.Order, error) {
+	// cache-aside: check cache first
+	if cached, err := uc.cache.Get(ctx, id); err == nil {
+		return cached, nil
+	}
+
+	// cache miss: query database
 	order, err := uc.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+
+	// populate cache for next read
+	_ = uc.cache.Set(ctx, id, order)
+
 	return order, nil
 }
 
