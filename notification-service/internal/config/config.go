@@ -3,19 +3,45 @@ package config
 import (
 	"bufio"
 	"os"
+	"strconv"
 	"strings"
 )
 
 type Config struct {
-	RabbitMQURL string
+	RabbitMQURL  string
+	RedisAddr    string
+	ProviderMode string // SIMULATED or REAL
+	MaxRetries   int
+	SMTPHost     string
+	SMTPPort     string
+	SMTPUser     string
+	SMTPPass     string
+	SMTPFrom     string
 }
 
 func Load() *Config {
 	loadEnvFile(".env")
 
 	return &Config{
-		RabbitMQURL: getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
+		RabbitMQURL:  getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
+		RedisAddr:    getEnv("REDIS_ADDR", "localhost:6379"),
+		ProviderMode: getEnv("PROVIDER_MODE", "SIMULATED"),
+		MaxRetries:   getEnvInt("MAX_RETRIES", 5),
+		SMTPHost:     getEnv("SMTP_HOST", ""),
+		SMTPPort:     getEnv("SMTP_PORT", "587"),
+		SMTPUser:     getEnv("SMTP_USER", ""),
+		SMTPPass:     getEnv("SMTP_PASS", ""),
+		SMTPFrom:     getEnv("SMTP_FROM", ""),
 	}
+}
+
+func getEnvInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			return i
+		}
+	}
+	return fallback
 }
 
 func getEnv(key, fallback string) string {
