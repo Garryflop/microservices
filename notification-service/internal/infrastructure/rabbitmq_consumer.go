@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -99,58 +98,23 @@ func (c *RabbitMQConsumer) Start(ctx context.Context) error {
 				log.Println("[Consumer] Channel closed, stopping")
 				return nil
 			}
-			c.processMessage(msg)
+			c.processMessage(ctx, msg)
 		}
 	}
 }
 
-func getRetryCount(msg amqp.Delivery) int64 {
-	xDeath, ok := msg.Headers["x-death"]
-	if !ok {
-		return 0
-	}
-
-	deaths, ok := xDeath.([]interface{})
-	if !ok || len(deaths) == 0 {
-		return 0
-	}
-
-	first, ok := deaths[0].(amqp.Table)
-	if !ok {
-		return 0
-	}
-
-	count, ok := first["count"].(int64)
-	if !ok {
-		return 0
-	}
-
-	return count
-}
-
-func (c *RabbitMQConsumer) processMessage(msg amqp.Delivery) {
+func (c *RabbitMQConsumer) processMessage(ctx context.Context, msg amqp.Delivery) {
 	var event domain.PaymentCompletedEvent
 	if err := json.Unmarshal(msg.Body, &event); err != nil {
 		log.Printf("[Consumer] Failed to unmarshal message: %v", err)
-		msg.Nack(false, false)
-		return
-	}
-	if strings.Contains(event.OrderID, "FAIL") {
-		retries := getRetryCount(msg)
-		log.Printf("[Consumer] Permanent error for order %s (retry %d/3)", event.OrderID, retries)
-
-		if retries >= 3 {
-			log.Printf("[Consumer] Max retries reached, sending to DLQ: %s", event.EventID)
-			msg.Nack(false, false) // reject theeen DLQ
-		} else {
-			msg.Nack(false, true) // requeue for retry
-		}
+		msg.Nack(false, false) // bad payload → DLQ
 		return
 	}
 
-	if err := c.handler.Handle(event); err != nil {
-		log.Printf("[Consumer] Failed to handle event %s: %v", event.EventID, err)
-		msg.Nack(false, true)
+	// handler manages retries with exponential backoff internally
+	if err := c.handler.Handle(ctx, event); err != nil {
+		log.Printf("[Consumer] Handler failed for event %s: %v", event.EventID, err)
+		msg.Nack(false, false) // max retries exhausted → DLQ
 		return
 	}
 
