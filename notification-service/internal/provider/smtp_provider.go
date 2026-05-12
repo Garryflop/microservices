@@ -7,7 +7,6 @@ import (
 	"net/smtp"
 )
 
-// SMTPEmailSender sends real emails via an SMTP server.
 type SMTPEmailSender struct {
 	host     string
 	port     string

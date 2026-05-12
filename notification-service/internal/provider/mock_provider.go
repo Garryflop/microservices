@@ -8,8 +8,7 @@ import (
 	"time"
 )
 
-// MockEmailSender simulates a real email provider with network latency
-// and occasional random failures for testing retry/backoff logic.
+
 type MockEmailSender struct{}
 
 func NewMockEmailSender() *MockEmailSender {

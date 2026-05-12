@@ -294,4 +294,173 @@ go run ./cmd/stream-client -order {order_id}
 
 ---
 
+## Assignment 4 — Performance Optimization & External Integrations
+
+### Cache-Aside Flow
+
+![Cache-Aside Flow](docs/images/CacheFlow.png)
+
+### Worker & Retry Flow
+
+![Worker Flow](docs/images/WorkerFlow.png)
+
+### Redis Caching Strategy
+
+The Order Service implements the **Cache-aside** pattern:
+
+| Operation | Cache Behavior |
+|-----------|---------------|
+| `GET /orders/:id` | Check Redis first → on miss, query PostgreSQL → populate cache with **5-minute TTL** |
+| `POST /orders` | After status update (Paid/Failed) → **immediately invalidate** cache (`DEL order:<id>`) |
+| `PATCH /orders/:id/cancel` | After cancellation → **immediately invalidate** cache |
+
+**Why cache-aside?** The application controls what goes into the cache, ensuring only successfully fetched data is cached. The TTL provides a safety net against stale data, while explicit invalidation on writes ensures consistency.
+
+### Cache Invalidation Strategy
+
+**Atomic invalidation** — `cache.Delete()` is called immediately after every `repo.UpdateStatus()` in the use case layer. This prevents serving stale data (e.g., showing "Pending" for a paid order).
+
+```
+CreateOrder → repo.UpdateStatus(Paid) → cache.Delete(orderID)
+CancelOrder → repo.UpdateStatus(Cancelled) → cache.Delete(orderID)
+```
+
+The cache is **never updated** on writes — only deleted. The next `GET` will re-populate it from the DB. This avoids race conditions between cache writes and DB writes.
+
+### Provider Adapter Pattern
+
+The Notification Service decouples email sending through the `EmailSender` interface:
+
+```go
+type EmailSender interface {
+    SendNotification(ctx context.Context, to, subject, body string) error
+}
+```
+
+| Implementation | Behavior | Use Case |
+|---------------|----------|----------|
+| `MockEmailSender` | Simulates 200-800ms latency + ~20% failure rate | Development & testing |
+| `SMTPEmailSender` | Real email via `net/smtp` | Production |
+
+**Switching providers** requires only changing the `PROVIDER_MODE` environment variable — no code changes. The `main.go` reads this variable and injects the correct implementation at startup.
+
+### Retry Logic & Exponential Backoff
+
+When the email provider fails, the worker retries with **exponential backoff**:
+
+```
+Attempt 1 → fail → wait 2s
+Attempt 2 → fail → wait 4s
+Attempt 3 → fail → wait 8s
+Attempt 4 → fail → wait 16s
+Attempt 5 → fail → DLQ (Dead Letter Queue)
+```
+
+The formula is `2^attempt` seconds. Max retries is configurable via `MAX_RETRIES`.
+
+### Idempotency (Redis-backed)
+
+Before processing a notification, the worker checks Redis:
+
+1. `EXISTS notification:processed:<payment_id>` — if key exists with status `"sent"`, skip
+2. If new: `SET notification:processed:<payment_id> "pending"` with 24h TTL
+3. On success: update to `"sent"`
+4. On failure after all retries: update to `"failed"`
+
+**Improvement over Assignment 3:** The old `sync.Map` reset on restart. Redis persists across restarts, preventing duplicate emails even after redeployment.
+
+### Rate Limiter (Bonus)
+
+The Order Service includes a Redis-based rate limiter middleware:
+
+- **Algorithm:** Fixed-window counter using `INCR` + `EXPIRE`
+- **Default limit:** 10 requests per 60 seconds per client IP
+- **Response:** `429 Too Many Requests` with headers:
+  - `X-RateLimit-Limit` — max requests allowed
+  - `X-RateLimit-Remaining` — requests left in window
+  - `X-RateLimit-Reset` — seconds until window resets
+
+### What Changed from Assignment 3
+
+| Area | Change |
+|------|--------|
+| **Order Service** | Added Redis cache-aside + invalidation; added rate limiter middleware |
+| **Notification Service** | Replaced `sync.Map` with Redis idempotency; added `EmailSender` adapter pattern; added exponential backoff retries |
+| **Infrastructure** | Added Redis container to `docker-compose.yml` |
+| **Configuration** | Added `REDIS_ADDR`, `CACHE_TTL_SECONDS`, `PROVIDER_MODE`, `MAX_RETRIES`, `RATE_LIMIT_*` env vars |
+
+### Updated Project Structure
+
+```
+microservices/
+├── order-service/
+│   ├── cmd/
+│   │   ├── order-service/main.go
+│   │   └── stream-client/main.go
+│   ├── internal/
+│   │   ├── config/config.go
+│   │   ├── domain/order.go
+│   │   ├── dto/
+│   │   ├── usecase/
+│   │   │   ├── order_usecase.go       # Cache-aside + invalidation
+│   │   │   └── ports.go               # OrderCache interface
+│   │   ├── repository/
+│   │   ├── transport/
+│   │   │   ├── http/
+│   │   │   └── grpc/server.go
+│   │   ├── infrastructure/
+│   │   │   ├── payment_client.go
+│   │   │   ├── grpc_payment_client.go
+│   │   │   └── redis_cache.go         # NEW — Redis cache implementation
+│   │   └── middleware/
+│   │       ├── idempotency.go
+│   │       ├── logging.go
+│   │       ├── recovery.go
+│   │       └── rate_limiter.go         # NEW — Redis rate limiter
+│   ├── migrations/
+│   └── Dockerfile
+├── payment-service/
+│   └── (unchanged from Assignment 3)
+├── notification-service/
+│   ├── cmd/notification-service/main.go  # Provider selection + Redis wiring
+│   ├── internal/
+│   │   ├── config/config.go
+│   │   ├── domain/event.go
+│   │   ├── handler/
+│   │   │   └── notification_handler.go   # Retries + backoff + idempotency
+│   │   ├── provider/                      # NEW — Adapter pattern
+│   │   │   ├── provider.go               # EmailSender interface
+│   │   │   ├── mock_provider.go          # Simulated provider
+│   │   │   └── smtp_provider.go          # Real SMTP
+│   │   ├── store/
+│   │   │   ├── idempotency_store.go      # Old sync.Map (preserved for history)
+│   │   │   └── redis_idempotency_store.go # NEW — Redis-backed
+│   │   └── infrastructure/
+│   │       └── rabbitmq_consumer.go
+│   └── Dockerfile
+├── docker-compose.yml
+└── docs/
+    └── images/
+        ├── CacheFlow.png                  # NEW
+        └── WorkerFlow.png                 # NEW
+```
+
+### Environment Variables
+
+| Variable | Service | Default | Description |
+|----------|---------|---------|-------------|
+| `REDIS_ADDR` | Order, Notification | `localhost:6379` | Redis connection address |
+| `CACHE_TTL_SECONDS` | Order | `300` | Cache entry TTL (5 minutes) |
+| `RATE_LIMIT_MAX` | Order | `10` | Max requests per window |
+| `RATE_LIMIT_WINDOW_SECONDS` | Order | `60` | Rate limit window (seconds) |
+| `PROVIDER_MODE` | Notification | `SIMULATED` | `SIMULATED` or `REAL` |
+| `MAX_RETRIES` | Notification | `5` | Max retry attempts |
+| `SMTP_HOST` | Notification | — | SMTP server host |
+| `SMTP_PORT` | Notification | `587` | SMTP server port |
+| `SMTP_USER` | Notification | — | SMTP username |
+| `SMTP_PASS` | Notification | — | SMTP password |
+| `SMTP_FROM` | Notification | — | Sender email address |
+
+---
+
 Made by Harryfloppa with ❤️
